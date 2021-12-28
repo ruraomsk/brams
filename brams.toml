@@ -1,0 +1,5 @@
+dbpath="db/"
+logpath=""
+step=1
+timeout=60
+port=2010
