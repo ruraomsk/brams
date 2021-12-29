@@ -5,11 +5,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"strings"
-	"time"
-
-	"github.com/ruraomsk/TLServer/logger"
-	"github.com/ruraomsk/brams/wal"
 )
 
 //Open открытие базы данных
@@ -40,8 +35,8 @@ func Drop(name string) {
 	}
 }
 
-//AddDb добавляет бд в пул бд
-func AddDb(name string) error {
+//addDbFromJson добавляет бд в пул бд
+func addDbFromJson(name string) error {
 	dbs.Lock()
 	defer dbs.Unlock()
 	if _, ok := dbs.dbs[name]; ok {
@@ -79,23 +74,30 @@ func CreateDb(name string, defkeys ...string) error {
 	}
 	db := new(Db)
 	db.Name = name
-	db.Defkey = make([]string, 0)
-	db.Defkey = append(db.Defkey, defkeys...)
+	db.Defkey = defkeys
 	db.Values = make(map[string]*Value)
 	db.UID = 0
 	db.fs = true
-	fname := path + name + ext
-	_, err := os.Stat(fname)
-	if err == nil {
-		return fmt.Errorf("db file %s is exist the path %s", name, path)
+	if sbrams.FS == JSON {
+		fname := path + name + ext
+		_, err := os.Stat(fname)
+		if err == nil {
+			return fmt.Errorf("db file %s is exist the path %s", name, path)
+		}
+		buf, err := json.Marshal(&db)
+		if err != nil {
+			return err
+		}
+		err = ioutil.WriteFile(fname, buf, os.FileMode(0644))
+		if err != nil {
+			return err
+		}
 	}
-	buf, err := json.Marshal(&db)
-	if err != nil {
-		return err
-	}
-	err = ioutil.WriteFile(fname, buf, os.FileMode(0644))
-	if err != nil {
-		return err
+	if needPGS {
+		err := CreateDbPGS(name, defkeys)
+		if err != nil {
+			return err
+		}
 	}
 	dbs.dbs[name] = db
 	return nil
@@ -119,47 +121,6 @@ func CreateDbInMemory(name string, defkeys ...string) error {
 	dbs.dbs[name] = db
 	return nil
 }
-func GetListFilesDbs() []string {
-	list := make([]string, 0)
-	dirs, err := ioutil.ReadDir(path)
-	if err != nil {
-		return list
-	}
-	for _, dir := range dirs {
-		if dir.IsDir() {
-			continue
-		}
-		if strings.HasSuffix(dir.Name(), ext) {
-
-			list = append(list, strings.TrimSuffix(dir.Name(), ext))
-		}
-	}
-	return list
-}
-func WorkerDB(step int, stop chan interface{}) {
-	ticker := time.NewTicker(time.Duration(step * int(time.Second)))
-	walChan = make(chan wal.WalRecord, 1000)
-	go wal.ListerWalStart(walChan)
-	for {
-		select {
-		case <-ticker.C:
-			saveDBs()
-		case <-stop:
-			saveDBs()
-			return
-		}
-	}
-}
-func saveDBs() {
-	dbs.Lock()
-	defer dbs.Unlock()
-	for _, db := range dbs.dbs {
-		err := db.SaveToFile()
-		if err != nil {
-			logger.Error.Printf("Сохранение БД %s %s", db.Name, err.Error())
-		}
-	}
-}
 func (db *Db) WriteRecord(value []byte) error {
 	v := new(Value)
 	v.Value = value
@@ -172,12 +133,12 @@ func (db *Db) WriteRecord(value []byte) error {
 	var op byte
 	if !is {
 		//Insert
-		op = wal.Insert
+		op = Insert
 		db.UID++
 		v.UID = db.UID
 	} else {
 		//Replace
-		op = wal.Replace
+		op = Replace
 		v.UID = old.UID
 	}
 	db.RWMutex.RUnlock()
@@ -185,7 +146,7 @@ func (db *Db) WriteRecord(value []byte) error {
 	db.Values[fullkey] = v
 	db.update = true
 	db.RWMutex.Unlock()
-	db.walOperation(op, fullkey, v)
+	db.pgsOperation(op, v)
 	return nil
 }
 func (db *Db) DeleteRecord(keys ...interface{}) error {
@@ -205,7 +166,7 @@ func (db *Db) DeleteRecord(keys ...interface{}) error {
 	db.RWMutex.Lock()
 	delete(db.Values, full)
 	db.RWMutex.Unlock()
-	db.walOperation(wal.Delete, full, value)
+	db.pgsOperation(Delete, value)
 	return nil
 }
 

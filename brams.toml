@@ -1,5 +1,16 @@
 dbpath="db/"
 logpath=""
 step=1
-timeout=60
-port=2010
+fs="json"
+chan=false
+[PGdB]
+	host= "192.168.115.115"
+	port= 5432
+	user= "brams"
+	password= "162747"
+	dbname= "brams"
+
+[tcp]
+	start=false
+	timeout=60
+	port=2010

@@ -10,7 +10,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/ruraomsk/brams/wal"
+	"github.com/ruraomsk/brams/setup"
 )
 
 var (
@@ -23,11 +23,22 @@ var (
 	ErrKeyBad          = errors.New("error: key bad")
 	ErrWrongParameters = errors.New("error: wrong param")
 	ext                = ".json"
-	walChan            chan wal.WalRecord
+	pgsChan            chan PgsRecord
+	needPGS            = false
+	sbrams             setup.SetupBrams
+	stop               chan interface{}
+	pgsStop            chan interface{}
 )
 
-func SetPath(p string) {
-	path = p
+const (
+	JSON  = "json"
+	PgSQL = "postrgers"
+)
+
+func SetupBrams(sb setup.SetupBrams) {
+	path = sb.DbPath
+	sbrams = sb
+
 }
 
 //Db Структура для доступа к БД
@@ -47,20 +58,26 @@ type Value struct {
 
 func init() {
 	dbs.dbs = make(map[string]*Db)
-
+	path = "./"
+	sbrams.Chan = false
+	sbrams.FS = "json"
+	sbrams.Step = 1
 }
 
-func (db *Db) walOperation(op byte, key string, value *Value) {
+func (db *Db) pgsOperation(op byte, value *Value) {
 	if !db.fs {
 		return
 	}
-	wr := new(wal.WalRecord)
-	wr.Key = key
+	if !needPGS {
+		return
+	}
+	wr := new(PgsRecord)
+
 	wr.Name = db.Name
 	wr.Operation = op
 	wr.UID = uint64(value.UID)
 	wr.Value = value.Value
-	walChan <- *wr
+	pgsChan <- *wr
 }
 func (db *Db) Close() {
 	db.RWMutex.Lock()
@@ -113,7 +130,7 @@ func (db *Db) makeFullKeyOnValue(value []byte) (string, error) {
 	return full.String(), nil
 }
 
-func (db *Db) SaveToFile() error {
+func (db *Db) saveToFile() error {
 	db.RWMutex.Lock()
 	defer db.RWMutex.Unlock()
 	if !db.fs {

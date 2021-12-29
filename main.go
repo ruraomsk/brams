@@ -10,40 +10,28 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/ruraomsk/TLServer/logger"
 	"github.com/ruraomsk/brams/drive"
-	"github.com/ruraomsk/brams/netcom"
+	"github.com/ruraomsk/brams/setup"
 	"github.com/ruraomsk/brams/tester"
 )
 
-type Setup struct {
-	DbPath  string `toml:"dbpath"`
-	LogPath string `toml:"logpath"`
-	Step    int    `toml:"step"`
-	Timeout int    `toml:"timeout"`
-	Port    int    `toml:"port"`
-}
-
-var set Setup
-
 func init() {
-	if _, err := toml.DecodeFile("brams.toml", &set); err != nil {
+	if _, err := toml.DecodeFile("brams.toml", &setup.Set); err != nil {
 		fmt.Printf("Can't load config file %s\n", err.Error())
 	}
 }
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	err := logger.Init(set.LogPath + "log")
+	err := logger.Init(setup.Set.LogPath + "log")
 	if err != nil {
 		fmt.Printf("Error init log subsystem %s\n", err.Error())
 		return
 	}
-	drive.SetPath(set.DbPath)
-	for _, db := range drive.GetListFilesDbs() {
-		drive.AddDb(db)
-	}
 	stop := make(chan interface{})
 	dbstop := make(chan interface{})
-	go drive.WorkerDB(set.Step, dbstop)
-	go netcom.ServerCommections(set.Port, time.Duration(set.Step*int(time.Second)), stop)
+
+	drive.SetupBrams(setup.Set)
+	drive.StartBrams(dbstop)
+
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 	fmt.Println("server start")
